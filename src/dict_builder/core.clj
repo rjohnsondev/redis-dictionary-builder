@@ -78,8 +78,7 @@
   "For each word in words, increment the value in redis with the key
   word."
   [words]
-  (wcar* (doall (map #(car/incr %) words)))
-  (swap! counter inc))
+  (wcar* (dorun (map #(car/incr %) words))))
 
 (defn count-loop
   "Loop forever, print out the value of counter every 5 secs."
@@ -88,14 +87,24 @@
     (println "Docs processed: " @counter)
     (recur (async/<!! (async/timeout 5000)))))
 
+(def queue (async/chan))
+
+(defn process-queue []
+  (loop [d (async/<!! queue)]
+    (add-words-to-redis d)
+    (swap! counter inc)
+    (recur (async/<!! queue))))
+
 (defn injest-file
   "Parse a wikipedia file, load word counts into redis."
   [filename]
   ;; start the progress printing
   (async/thread (count-loop))
-  (println "starting processings")
-  (doall
-   (map add-words-to-redis
+  (async/thread (process-queue))
+  (async/thread (process-queue))
+  (println "started processings")
+  (dorun ; don't hold onto memory!
+   (map #(async/>!! queue %)
         (map doc-words-seq
              (article-text-seq filename)))))
 
