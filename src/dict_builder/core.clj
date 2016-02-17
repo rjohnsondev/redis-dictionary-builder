@@ -44,14 +44,16 @@
   "Parse the wikipedia xml and return a lazy sequence of page
   contents. Meta-pages such as redirects are ignored."
   [filename]
-  (-> (io/input-stream filename)
-      (#(.createCompressorInputStream (CompressorStreamFactory.) %))
-      xml/parse
-      :content
-      (#(filter (fn [x] (= (get x :tag) :page)) %))
-      (#(map (fn [x] (first (:content (get-node (get-node x :revision):text)))) %))
-      ;; kill documents that just have redirects
-      (#(filter (fn [x] (not (str/starts-with? x "#"))) %))))
+  (->> (io/input-stream filename)
+       (.createCompressorInputStream (CompressorStreamFactory.))
+       xml/parse
+       :content
+       (filter #(= (get % :tag) :page))
+       (map #(first (:content (get-node (get-node % :revision):text))))
+       ;; kill documents that just have redirects
+       (filter some?)
+       (filter #(not (str/starts-with? % "#")))))
+
 
 (defn char-term-attribute-seq
   "Return a lazy sequence of analyzed strings from a TokenStream."
@@ -68,17 +70,24 @@
   "Analyze the passed string and return a realized seq of the
   processed terms."
   [txt]
-  (let [ts (.tokenStream analyzer "content" txt)
-        _ (.reset ts)
-        terms (doall (char-term-attribute-seq ts))
-        _ (.close ts)]
-    terms))
+  (if (nil? txt)
+    []
+    (let [ts (.tokenStream analyzer "content" txt)
+          _ (.reset ts)
+          terms (doall (char-term-attribute-seq ts))
+          _ (.close ts)]
+      terms)))
 
 (defn add-words-to-redis
   "For each word in words, increment the value in redis with the key
   word."
   [words]
-  (wcar* (dorun (map #(car/incr %) words))))
+  (wcar* (dorun
+           (->> words
+                (filter #(nil? (re-find #"^\d*$" %)))
+                (filter #(= (.indexOf % ".") -1))
+                (filter #(= (.indexOf % ":") -1))
+                (map #(car/incr %))))))
 
 (defn count-loop
   "Loop forever, print out the value of counter every 5 secs."
